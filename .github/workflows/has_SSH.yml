@@ -1,0 +1,131 @@
+name: ImmortalWrt-24.10-6.6固件构建（支持 SSH 调试）
+
+on:
+  repository_dispatch:
+    types: [build_firmware]
+
+  workflow_dispatch:
+    inputs:
+      device_model:
+        description: '选择目标设备型号 (代码)'
+        type: choice
+        required: true
+        options:
+          - cmcc_rax3000m
+          - cmcc_rax3000m-emmc
+          - cudy_ap3000-v1
+          - cudy_ap3000outdoor-v1
+          - cudy_m3000-v1
+          - cudy_re3000-v1
+          - cudy_tr3000-v1
+          - cudy_tr3000-v1-256mb
+          - cudy_wr3000-v1
+          - cudy_wr3000s-v1
+          - glinet_gl-mt2500
+          - glinet_gl-mt3000
+          - glinet_gl-x3000
+          - glinet_gl-xe3000
+          - h3c_magic-nx30-pro
+          - huasifei_wh3000-pro
+          - huasifei_wh3000-emmc
+          - jcg_q30-pro
+          - livinet_zr-3020
+          - routerich_ax3000
+          - routerich_ax3000-v1
+          - xiaomi_mi-router-ax3000t
+          - xiaomi_mi-router-wr30u-stock
+          - xiaomi_redmi-router-ax6000-stock
+          - zyxel_ex5601-t0-stock
+          - zyxel_nwa50ax-pro
+
+      enable_5g_25db:
+        description: '启用 5G 25dB 修改'
+        type: boolean
+        default: true
+
+      enable_ssh:
+        description: '启用 SSH 调试（tmate）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-24.10
+  REPO_BRANCH: openwrt-24.10-6.6
+  CONFIG_FILE: 24.10-6.6.config
+  DIY_P1_SH: scripts/diy-part1.sh
+  DIY_P2_SH: scripts/diy-part2.sh
+  TZ: Asia/Shanghai
+  ENABLE_5G_25DB: ${{ github.event.inputs.enable_5g_25db }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 打印调试信息
+        run: |
+          echo "设备：${{ github.event.inputs.device_model }}"
+          echo "5G 25dB：${{ env.ENABLE_5G_25DB }}"
+          echo "SSH 调试：${{ github.event.inputs.enable_ssh }}"
+
+      - name: 设置设备型号
+        run: |
+          echo "DEVICE=${{ github.event.inputs.device_model }}" >> $GITHUB_ENV
+
+      - uses: actions/checkout@v4
+
+      - name: 初始化环境
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential clang flex gawk gcc-multilib g++-multilib \
+            gettext git libncurses5-dev libssl-dev python3 rsync unzip zlib1g-dev \
+            file wget ccache
+          sudo timedatectl set-timezone "$TZ"
+          mkdir -p /workdir
+          sudo chown $USER:$USER /workdir
+
+      # ================= SSH 调试入口 =================
+      - name: SSH 连接到 GitHub Actions（tmate）
+        if: github.event.inputs.enable_ssh == 'true'
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+      # =================================================
+
+      - name: 克隆源码
+        working-directory: /workdir
+        run: |
+          git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+      - name: 准备配置
+        run: |
+          mv $CONFIG_FILE openwrt/.config
+          echo "CONFIG_TARGET_mediatek_filogic_DEVICE_${DEVICE}=y" >> openwrt/.config
+          chmod +x $DIY_P1_SH $DIY_P2_SH
+          cd openwrt
+          ../$DIY_P1_SH
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          ../$DIY_P2_SH
+          make defconfig
+
+      - name: 编译固件
+        timeout-minutes: 180
+        run: |
+          cd openwrt
+          make -j$(nproc) V=s || make -j1 V=s
+
+      # === 编译失败时自动 SSH（可保留）===
+      - name: 编译失败自动开启 SSH
+        if: failure()
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
