@@ -160,12 +160,6 @@ jobs:
             openwrt/feeds
           key: ${{ runner.os }}-build-${{ env.REPO_URL }}-${{ env.REPO_BRANCH }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/.config') }}
           restore-keys: ${{ runner.os }}-build-
-      - name: SSH 连接到 Actions（tmate）
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.enable_ssh == 'true'
-        uses: mxschmitt/action-tmate@v3
-        with:
-          limit-access-to-actor: false
-
       - name: 克隆或更新源代码
         working-directory: /workdir
         run: |
@@ -199,7 +193,11 @@ jobs:
           mkdir -p "$(dirname "$EEPROM_FILE")" && touch "$EEPROM_FILE" && chmod 644 "$EEPROM_FILE"
           CURRENT_CONTENT=$(dd if="$EEPROM_FILE" bs=1 skip=$((0x445)) count=20 2>/dev/null || echo "")
           [ "$CURRENT_CONTENT" != "$EXPECTED_CONTENT" ] && printf '\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B\x2B' | dd of="$EEPROM_FILE" bs=1 seek=$((0x445)) conv=notrunc
-
+      - name: SSH 连接到 Actions（tmate）
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.enable_ssh == 'true'
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: false
       - name: 编译固件
         id: compile
         timeout-minutes: 180
